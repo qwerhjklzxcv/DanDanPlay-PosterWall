@@ -50,6 +50,7 @@ dependencies {
     implementation(project(":user_component"))
     implementation(project(":local_component"))
     implementation(project(":storage_component"))
+    implementation(project(":poster_component"))
 
     kapt(Dependencies.Alibaba.arouter_compiler)
 }

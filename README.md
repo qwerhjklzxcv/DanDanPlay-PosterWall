@@ -1,5 +1,10 @@
 # [DanDanPlayForAndroid](https://github.com/xyoye/DanDanPlayForAndroid)
 
+> ## ⚠️ 这是一个非官方二次开发分支：DanDanPlay-PosterWall
+>
+> 基于原版 4.1.4 新增「WebDAV 网盘自动刮削 + 海报墙」，与弹弹play 官方无关，不用于商业用途。
+> 改动清单、构建方式与许可证说明见 **[FORK.md](FORK.md)**。
+
 ## 简介
 
 《弹弹play 概念版》是一个本地视频播放器，是弹弹play系列应用安卓平台的实现，致力于视频+弹幕的播放，为您带来愉悦的观影体验。

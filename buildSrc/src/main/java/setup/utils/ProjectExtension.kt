@@ -32,12 +32,17 @@ fun Project.setupDefaultDependencies() {
 }
 
 fun Project.currentCommit(): String {
-    val stdout = ByteArrayOutputStream()
-    exec {
-        commandLine = "git log --pretty=format:%h -1".split(" ")
-        standardOutput = stdout
+    // 源码包（zip）解压出来的目录通常没有 .git，此时不要让整个工程配置失败
+    return try {
+        val stdout = ByteArrayOutputStream()
+        exec {
+            commandLine = "git log --pretty=format:%h -1".split(" ")
+            standardOutput = stdout
+        }
+        stdout.toString().ifBlank { "unknown" }
+    } catch (e: Exception) {
+        "unknown"
     }
-    return stdout.toString()
 }
 
 fun AppExtension.setupSignConfigs(project: Project) = apply {

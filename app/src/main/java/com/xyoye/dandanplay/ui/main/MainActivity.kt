@@ -33,11 +33,13 @@ class MainActivity : BaseActivity<MainViewModel, ActivityMainBinding>(),
     companion object {
         private const val TAG_FRAGMENT_HOME = "tag_fragment_home"
         private const val TAG_FRAGMENT_MEDIA = "tag_fragment_media"
+        private const val TAG_FRAGMENT_POSTER = "tag_fragment_poster"
         private const val TAG_FRAGMENT_PERSONAL = "tag_fragment_personal"
     }
 
     private lateinit var homeFragment: Fragment
     private lateinit var mediaFragment: Fragment
+    private lateinit var posterFragment: Fragment
     private lateinit var personalFragment: Fragment
     private lateinit var previousFragment: Fragment
 
@@ -69,20 +71,21 @@ class MainActivity : BaseActivity<MainViewModel, ActivityMainBinding>(),
             setDisplayShowTitleEnabled(true)
         }
 
-        //默认显示媒体库页面
+        //默认显示海报墙页面
         //标题
-        title = "媒体库"
+        title = "海报墙"
         //移除所有已添加的fragment，防止如旋转屏幕后导致的屏幕错乱
         supportFragmentManager.findAndRemoveFragment(
             TAG_FRAGMENT_HOME,
             TAG_FRAGMENT_MEDIA,
+            TAG_FRAGMENT_POSTER,
             TAG_FRAGMENT_PERSONAL
         )
-        //切换到媒体库页面
-        switchFragment(TAG_FRAGMENT_MEDIA)
+        //切换到海报墙页面
+        switchFragment(TAG_FRAGMENT_POSTER)
         //底部导航栏设置选中
         dataBinding.navigationView.post {
-            dataBinding.navigationView.selectedItemId = R.id.navigation_media
+            dataBinding.navigationView.selectedItemId = R.id.navigation_poster
         }
 
         //设置底部导航栏事件
@@ -96,6 +99,11 @@ class MainActivity : BaseActivity<MainViewModel, ActivityMainBinding>(),
                 R.id.navigation_media -> {
                     title = "媒体库"
                     switchFragment(TAG_FRAGMENT_MEDIA)
+                }
+
+                R.id.navigation_poster -> {
+                    title = "海报墙"
+                    switchFragment(TAG_FRAGMENT_POSTER)
                 }
 
                 R.id.navigation_personal -> {
@@ -206,6 +214,23 @@ class MainActivity : BaseActivity<MainViewModel, ActivityMainBinding>(),
                 } else {
                     supportFragmentManager.showFragment(fragment)
                     personalFragment = fragment
+                    previousFragment = fragment
+                    fragmentTag = tag
+                }
+            }
+
+            TAG_FRAGMENT_POSTER -> {
+                val fragment = supportFragmentManager.findFragmentByTag(TAG_FRAGMENT_POSTER)
+                if (fragment == null) {
+                    getFragment(RouteTable.Poster.WallFragment)?.also {
+                        addFragment(it, TAG_FRAGMENT_POSTER)
+                        posterFragment = it
+                        previousFragment = it
+                        fragmentTag = tag
+                    }
+                } else {
+                    supportFragmentManager.showFragment(fragment)
+                    posterFragment = fragment
                     previousFragment = fragment
                     fragmentTag = tag
                 }

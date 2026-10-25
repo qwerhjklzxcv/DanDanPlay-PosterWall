@@ -59,4 +59,9 @@ object RouteTable {
         const val StorageFileProvider = "/stream/storage_file/provider"
         const val StoragePlus = "/stream/storage_plus"
     }
+
+    object Poster {
+        const val WallFragment = "/poster/wall_fragment"
+        const val Detail = "/poster/detail"
+    }
 }

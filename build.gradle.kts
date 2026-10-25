@@ -1,5 +1,9 @@
 buildscript {
     repositories {
+        // 国内镜像优先，直连 google()/mavenCentral() 不通时也能构建
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
+        maven("https://maven.aliyun.com/repository/gradle-plugin")
         google()
         mavenCentral()
     }
@@ -16,6 +20,8 @@ plugins {
 
 allprojects {
     repositories {
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
         google()
         mavenCentral()
         maven("https://developer.huawei.com/repo/")
