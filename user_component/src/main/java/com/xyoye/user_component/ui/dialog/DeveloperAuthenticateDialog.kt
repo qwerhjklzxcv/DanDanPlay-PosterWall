@@ -57,8 +57,8 @@ class DeveloperAuthenticateDialog(
      * 开发者认证
      */
     private fun checkAuthenticate() {
-        val appId = binding.inputAppId.text.toString()
-        val appSecret = binding.inputAppSecret.text.toString()
+        val appId = binding.inputAppId.text.toString().trim()
+        val appSecret = binding.inputAppSecret.text.toString().trim()
 
         if (appId.isEmpty() || appSecret.isEmpty()) {
             ToastCenter.showWarning("请输入AppId和AppSecret")
@@ -67,17 +67,36 @@ class DeveloperAuthenticateDialog(
 
         SupervisorScope.IO.launch {
             loading(true)
-            val result = UserRepository.checkAuthenticate(appId, appSecret).getOrNull()
-            loading(false)
-            if (result != null && result.code() == 200) {
-                authenticateSuccess(appId, appSecret)
-                return@launch
+
+            // login/renew 依赖用户登录态，未登录时可能返回 401；先试它，失败再用公开接口兜底
+            val primary = UserRepository.checkAuthenticate(appId, appSecret)
+            var code = primary.getOrNull()?.code()
+            var detail = primary.exceptionOrNull()?.let {
+                "${it.javaClass.simpleName}: ${it.message.orEmpty()}"
             }
 
-            if (result?.code() == 403) {
-                ToastCenter.showError("认证失败，凭证不被允许访问")
-            } else {
-                ToastCenter.showError("认证过程中发生意外，请稍后重试")
+            if (code != 200) {
+                val fallback = UserRepository.checkAuthenticateBySearch(appId, appSecret)
+                val fallbackCode = fallback.getOrNull()?.code()
+                if (fallbackCode == 200) {
+                    loading(false)
+                    authenticateSuccess(appId, appSecret)
+                    return@launch
+                }
+                fallback.exceptionOrNull()?.let {
+                    detail = "${it.javaClass.simpleName}: ${it.message.orEmpty()}"
+                }
+                code = fallbackCode ?: code
+            }
+
+            loading(false)
+
+            when {
+                code == 200 -> authenticateSuccess(appId, appSecret)
+                code == 403 -> ToastCenter.showError("认证失败：AppId 或 AppSecret 无效（403）")
+                code == 401 -> ToastCenter.showError("认证失败：需要先在 App 内登录账号（401）")
+                code != null -> ToastCenter.showError("认证失败（HTTP $code）")
+                else -> ToastCenter.showError("网络请求失败：${detail ?: "未知错误"}")
             }
         }
     }

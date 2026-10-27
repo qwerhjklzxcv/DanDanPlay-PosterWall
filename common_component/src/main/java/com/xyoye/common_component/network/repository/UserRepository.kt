@@ -121,4 +121,12 @@ object UserRepository : BaseRepository() {
         .doGet {
             Retrofit.danDanService.checkAuthenticate(appId, appSecret, 1)
         }
+
+    /**
+     * 校验凭证（兜底）：用公开搜索接口验证，不依赖用户登录态
+     */
+    suspend fun checkAuthenticateBySearch(appId: String, appSecret: String) = request()
+        .doGet {
+            Retrofit.danDanService.checkAuthenticateBySearch(appId, appSecret, 1, "test")
+        }
 }

@@ -26,6 +26,7 @@ import retrofit2.http.Header
 import retrofit2.http.Headers
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 import retrofit2.http.QueryMap
 
 /**
@@ -125,5 +126,17 @@ interface DanDanService {
         @Header(DeveloperCertificateInterceptor.HEADER_APP_ID) appId: String,
         @Header(DeveloperCertificateInterceptor.HEADER_APP_SECRET) appSecret: String,
         @Header("X-Auth") authMode: Int
+    ): Response<ResponseBody>
+
+    /**
+     * 备用凭证校验：login/renew 依赖用户登录态，未登录时可能返回 401。
+     * 搜索接口是公开接口，只要 AppId/AppSecret 有效就会返回 200，用它兜底更可靠。
+     */
+    @GET("api/v2/search/anime")
+    suspend fun checkAuthenticateBySearch(
+        @Header(DeveloperCertificateInterceptor.HEADER_APP_ID) appId: String,
+        @Header(DeveloperCertificateInterceptor.HEADER_APP_SECRET) appSecret: String,
+        @Header("X-Auth") authMode: Int,
+        @Query("keyword") keyword: String
     ): Response<ResponseBody>
 }

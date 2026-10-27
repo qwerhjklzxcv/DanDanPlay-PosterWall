@@ -17,10 +17,12 @@ class SignatureInterceptor : Interceptor {
         val oldRequest = chain.request()
         val newRequest = oldRequest.newBuilder()
 
+        // 非官方签名构建下 native 层拿不到签名表，这里可能是 null；
+        // 上游直接 .forEach 会抛 NPE，导致所有请求变成「未知错误」
         SecurityHelper.getInstance().getSignatureMap(
             oldRequest.url.encodedPath,
             BaseApplication.getAppContext()
-        ).forEach {
+        )?.forEach {
             newRequest.addHeader(it.key, it.value ?: "")
         }
 
