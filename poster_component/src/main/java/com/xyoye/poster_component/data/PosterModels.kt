@@ -27,6 +27,10 @@ data class PosterSeries(
     var posterUrl: String? = null,
     var rating: Double = 0.0,
     var summary: String? = null,
+    /** 官方多语言标题（来自 /api/v2/bangumi/{id} 的 titles） */
+    var titles: MutableList<PosterTitle> = mutableListOf(),
+    /** 详情是否成功拉取过；老缓存没有多语言标题，用它触发一次补全 */
+    var titlesChecked: Boolean = false,
     var matched: Boolean = false,
     var lastUpdate: Long = 0L,
     /** 运行时字段（不写缓存）：已看过的集数 / 最后看到的集号 */
@@ -34,8 +38,14 @@ data class PosterSeries(
     var lastWatchedEpisode: Int = 0
 ) {
 
+    /**
+     * 展示用标题：按系统语言选官方标题，选不到再退回刮削标题 / 文件名解析出的标题。
+     */
     val displayTitle: String
-        get() = animeTitle?.takeIf { it.isNotBlank() } ?: rawTitle
+        get() = TitleLocalizer.pick(
+            titles,
+            animeTitle?.takeIf { it.isNotBlank() } ?: rawTitle
+        )
 
     val episodeCount: Int
         get() = episodes.size
@@ -72,7 +82,16 @@ data class PosterSeries(
         json.put("posterUrl", posterUrl ?: "")
         json.put("rating", rating)
         json.put("summary", summary ?: "")
+        json.put("titles", JSONArray().apply {
+            titles.forEach { title ->
+                put(JSONObject().apply {
+                    put("language", title.language)
+                    put("title", title.title)
+                })
+            }
+        })
         json.put("matched", matched)
+        json.put("titlesChecked", titlesChecked)
         json.put("lastUpdate", lastUpdate)
         json.put("episodes", JSONArray().apply {
             episodes.forEach { episode ->
@@ -102,6 +121,18 @@ data class PosterSeries(
                     )
                 )
             }
+
+            val titles = mutableListOf<PosterTitle>()
+            val titleArray = json.optJSONArray("titles") ?: JSONArray()
+            for (index in 0 until titleArray.length()) {
+                val item = titleArray.optJSONObject(index) ?: continue
+                val language = item.optString("language")
+                val title = item.optString("title")
+                if (title.isNotBlank()) {
+                    titles.add(PosterTitle(language, title))
+                }
+            }
+
             return PosterSeries(
                 id = json.optString("id"),
                 storageId = json.optInt("storageId"),
@@ -116,6 +147,8 @@ data class PosterSeries(
                 posterUrl = json.optString("posterUrl").takeIf { it.isNotBlank() },
                 rating = json.optDouble("rating"),
                 summary = json.optString("summary").takeIf { it.isNotBlank() },
+                titles = titles,
+                titlesChecked = json.optBoolean("titlesChecked"),
                 matched = json.optBoolean("matched"),
                 lastUpdate = json.optLong("lastUpdate")
             )
@@ -129,4 +162,10 @@ data class PosterEpisode(
     var path: String = "",
     var episode: Int = 0,
     var size: Long = 0L
+)
+
+/** 官方标题（language 形如 zh-Hans / en / ja） */
+data class PosterTitle(
+    var language: String = "",
+    var title: String = ""
 )

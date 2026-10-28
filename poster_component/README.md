@@ -108,11 +108,13 @@ git init && git add . && git commit -m "init"
 | 搜索（边打边过滤） | `PosterWallViewModel.emit()` + 顶部 `search_et` |
 | 排序：最近更新 / 名称 / 评分 / 集数 / 年份 | `PosterSort` + `sort_tv` 弹窗 |
 | 筛选：全部 / 已匹配 / 未匹配 / 有进度 | `PosterFilter` + `filter_tv` 弹窗 |
-| 下拉刷新 | `SwipeRefreshLayout` → `viewModel.refresh()` |
 | 卡片观看进度「看到 5/12」 | `PosterRepository.applyWatchProgress()` 读 `play_history` |
-| 长按重新匹配（搜索 + 点选绑定） | `PosterMatchDialog` + `PosterRepository.applyMatch()` |
+| 长按重新匹配（搜索 + 点选绑定） | `PosterMatchDialog` + `PosterScraper.applyAnime()` |
 | 恢复自动匹配 | `PosterRepository.clearMatch()` |
 | 空态引导添加网盘 | `addStorageBt` → `RouteTable.Stream.StoragePlus` |
+| 刮削三级缓存（文件名/关键词/详情） | `ScrapeCacheStore` |
+| 番剧名按系统语言切换 | `TitleLocalizer` + `BangumiData.titles` |
+| 扫描范围：全部网络媒体库 | `PosterRepository.SCAN_MEDIA_TYPES` |
 
 ## 7. 现在的能力边界（重要）
 
@@ -120,7 +122,6 @@ git init && git add . && git commit -m "init"
 
 | 限制 | 影响 | 建议 |
 |---|---|---|
-| 只扫 `WEBDAV_SERVER` | SMB / FTP / Alist 不扫 | 改 `PosterRepository.SCAN_MEDIA_TYPES` 即可放开（底层是同一套 Storage） |
 | 扫描是顺序列目录 | 大库（几千文件）首次扫描慢，可能几分钟 | 下一版改成按目录并发 + 断点续扫 |
 | 中文标题按 Unicode 排序 | 「名称」排序不是拼音序 | 要拼音序就引 pinyin4j |
 | 不生成视频缩略图 | 没刮到的显示灰底 | 可用 `coil-video` 取首帧，或用 App 已有的封面缓存机制 |

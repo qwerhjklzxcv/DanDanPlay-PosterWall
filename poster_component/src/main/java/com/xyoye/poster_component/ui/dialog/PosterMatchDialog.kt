@@ -12,6 +12,7 @@ import com.xyoye.common_component.weight.dialog.BaseBottomDialog
 import com.xyoye.data_component.data.AnimeData
 import com.xyoye.poster_component.R
 import com.xyoye.poster_component.data.PosterRepository
+import com.xyoye.poster_component.data.PosterScraper
 import com.xyoye.poster_component.data.PosterSeries
 import com.xyoye.poster_component.databinding.DialogPosterMatchBinding
 import com.xyoye.poster_component.databinding.ItemMatchAnimeBinding
@@ -123,8 +124,28 @@ class PosterMatchDialog(
     }
 
     private fun applyMatch(anime: AnimeData) {
-        val updated = PosterRepository.applyMatch(series, anime)
-        onMatched.invoke(updated)
-        dismiss()
+        // 补全详情（封面/评分/多语言标题），再落盘
+        scope.launch {
+            val updated = try {
+                PosterScraper.applyAnime(series, anime.animeId, anime.animeTitle)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                series.copy(
+                    animeId = anime.animeId,
+                    animeTitle = anime.animeTitle,
+                    posterUrl = anime.imageUrl,
+                    rating = anime.rating,
+                    matched = true,
+                    lastUpdate = System.currentTimeMillis()
+                )
+            }
+
+            PosterRepository.updateMatched(updated)
+
+            withContext(Dispatchers.Main) {
+                onMatched.invoke(updated)
+                dismiss()
+            }
+        }
     }
 }

@@ -15,6 +15,14 @@ class IOFileDanmuSource(
     private val path: String
 ) : AbstractDanmuSource() {
 
+    override fun fileName(): String? {
+        return try {
+            File(path).name.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     override suspend fun getStream(): InputStream? {
         val file = getIOFile() ?: return null
         return try {

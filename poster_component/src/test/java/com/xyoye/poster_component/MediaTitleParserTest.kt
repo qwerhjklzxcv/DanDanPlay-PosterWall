@@ -111,4 +111,20 @@ class MediaTitleParserTest {
         assertTrue(MediaTitleParser.similarity("葬送的芙莉莲", "葬送的芙莉莲 第二季") >= 60)
         assertTrue(MediaTitleParser.similarity("药屋少女的呢喃", "孤独摇滚") < 40)
     }
+
+    @Test
+    fun `title inside bracket folder name`() {
+        // DBD-Raws 这类命名：番名本身在括号里
+        val folder = "[DBD-Raws][异世界舅舅][01-13TV全集+特典映像][1080P][BDRip][HEVC-10bit][简繁日双语外挂][FLAC][MKV]"
+        val parsed = MediaTitleParser.parseFileName("01.mkv", folder)
+        assertEquals("异世界舅舅", parsed.title)
+    }
+
+    @Test
+    fun `season inside bracket folder name`() {
+        val folder = "[KTXP][Grand_Blue_Dreaming_S2][GB_CN][HEVC_opus][1080p]"
+        val parsed = MediaTitleParser.parseFileName("01.mkv", folder)
+        assertEquals("Grand Blue Dreaming", parsed.title)
+        assertEquals(2, parsed.season)
+    }
 }

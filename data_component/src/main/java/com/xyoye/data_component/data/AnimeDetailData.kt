@@ -31,6 +31,8 @@ data class BangumiData(
     var animeTitle: String? = null,
     var imageUrl: String? = null,
     var searchKeyword: String? = null,
+    /** 官方多语言标题，如 zh-Hans / ja / en */
+    var titles: MutableList<BangumiTitleData>? = null,
     var isOnAir: Boolean,
     var airDay: Int,
     var isFavorited: Boolean,
@@ -40,6 +42,13 @@ data class BangumiData(
     var relateds: MutableList<AnimeData> = mutableListOf(),
     var similars: MutableList<AnimeData> = mutableListOf(),
     var tags: MutableList<TagData> = mutableListOf()
+) : Parcelable
+
+@Parcelize
+@JsonClass(generateAdapter = true)
+data class BangumiTitleData(
+    var language: String? = null,
+    var title: String? = null
 ) : Parcelable
 
 @Parcelize

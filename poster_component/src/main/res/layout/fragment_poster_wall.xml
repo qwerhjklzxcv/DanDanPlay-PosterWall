@@ -111,19 +111,13 @@
             android:layout_height="0dp"
             android:layout_weight="1">
 
-            <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-                android:id="@+id/swipe_refresh"
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/series_rv"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent">
-
-                <androidx.recyclerview.widget.RecyclerView
-                    android:id="@+id/series_rv"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:clipToPadding="false"
-                    android:padding="6dp"
-                    tools:listitem="@layout/item_poster_series" />
-            </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:padding="6dp"
+                tools:listitem="@layout/item_poster_series" />
 
             <LinearLayout
                 android:id="@+id/empty_group"
@@ -155,8 +149,7 @@
                     android:text="去添加 WebDAV 网盘"
                     android:textColor="#2095F4"
                     android:textSize="13sp"
-                    android:visibility="gone" />
-            </LinearLayout>
+                    android:visibility="gone" />            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/progress_group"

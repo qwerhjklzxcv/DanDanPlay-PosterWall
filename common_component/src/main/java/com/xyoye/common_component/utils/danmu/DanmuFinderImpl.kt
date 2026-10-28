@@ -20,23 +20,29 @@ class DanmuFinderImpl(
 ) : DanmuFinder {
 
     override suspend fun getMatched(source: DanmuSource): DanmuAnimeData? {
-        val hash = source.hash()
-            ?: return null
-
-        val episode = danmuQuery.match(hash)
+        val episode = matchEpisode(source)
             ?: return null
 
         return DanmuAnimeData(episode.animeId, episode.animeTitle, listOf(episode))
     }
 
     override suspend fun downloadMatched(source: DanmuSource): LocalDanmuBean? {
-        val hash = source.hash()
-            ?: return null
-
-        val episode = danmuQuery.match(hash)
+        val episode = matchEpisode(source)
             ?: return null
 
         return downloadEpisode(episode)
+    }
+
+    /**
+     * 匹配剧集：走文件 hash（前 16MB 的 MD5）。
+     *
+     * 文件名匹配（fileNameOnly）实测对所有参数组合都返回「参数不符合规则」，
+     * 服务端不对这档应用开放，所以这里只保留 hash 这一条可靠路径；
+     * 网络文件在 NetworkDanmuSource 里用 Range 请求只拉前 16MB。
+     */
+    private suspend fun matchEpisode(source: DanmuSource): DanmuEpisodeData? {
+        val hash = source.hash() ?: return null
+        return danmuQuery.match(hash)
     }
 
     override suspend fun downloadEpisode(episode: DanmuEpisodeData, withRelated: Boolean): LocalDanmuBean? {

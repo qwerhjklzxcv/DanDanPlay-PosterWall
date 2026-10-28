@@ -74,11 +74,6 @@ class PosterWallFragment : BaseFragment<PosterWallViewModel, FragmentPosterWallB
         dataBinding.sortTv.setOnClickListener { showSortDialog() }
         dataBinding.filterTv.setOnClickListener { showFilterDialog() }
 
-        dataBinding.swipeRefresh.setColorSchemeResources(R.color.pw_theme)
-        dataBinding.swipeRefresh.setOnRefreshListener {
-            viewModel.refresh(forceScrape = false)
-        }
-
         dataBinding.authTipsTv.setOnClickListener {
             requireContext().startUrlActivity(DEVELOPER_CENTER_URL)
         }
@@ -151,7 +146,6 @@ class PosterWallFragment : BaseFragment<PosterWallViewModel, FragmentPosterWallB
 
         viewModel.refreshingLiveData.observe(viewLifecycleOwner) { refreshing ->
             dataBinding.refreshBt.isEnabled = refreshing.not()
-            dataBinding.swipeRefresh.isRefreshing = refreshing
             if (refreshing) {
                 dataBinding.progressGroup.visibility = android.view.View.VISIBLE
                 dataBinding.progressTv.text = "正在扫描网盘…"
@@ -231,7 +225,7 @@ class PosterWallFragment : BaseFragment<PosterWallViewModel, FragmentPosterWallB
         dataBinding.emptyTv.text = when {
             keyword.isNotEmpty() -> "没有找到包含「$keyword」的番剧"
             viewModel.isFiltering() -> "当前筛选条件下没有番剧"
-            else -> "还没有刮削到番剧\n下拉可重新扫描，或先在「媒体库」添加 WebDAV 网盘"
+            else -> "还没有刮削到番剧\n点右上角「刷新」重扫，或先在「媒体库」添加网络媒体库"
         }
     }
 
