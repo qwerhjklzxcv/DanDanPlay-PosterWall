@@ -329,6 +329,26 @@ object MediaTitleParser {
         return 0
     }
 
+    /**
+     * 标题是否「纯拉丁」（罗马音 / 英文）。
+     * 含汉字 / 假名 / 韩文就不算，避免把中文番名当罗马音处理。
+     */
+    fun isLatinTitle(title: String): Boolean {
+        if (title.isBlank()) return false
+
+        var hasLetter = false
+        title.forEach { char ->
+            when {
+                char.code in 0x4E00..0x9FFF -> return false
+                char.code in 0x3400..0x4DBF -> return false
+                char.code in 0x3040..0x30FF -> return false
+                char.code in 0xAC00..0xD7AF -> return false
+                char.isLetter() && char.code < 0x0250 -> hasLetter = true
+            }
+        }
+        return hasLetter
+    }
+
     private fun parseSeason(name: String): Int {
         SEASON_REGEXES.forEach { regex ->
             val match = regex.find(name) ?: return@forEach
@@ -356,20 +376,28 @@ object MediaTitleParser {
             return it.groupValues[1].toIntOrNull() ?: 0
         }
 
-        // 去掉末尾的 "[1080p]" 这类标签后再看结尾数字，避免被中文名后面的标签干扰
-        val tail = name.replace(
-            Regex("(\\[[^]]*]|【[^】]*】|（[^）]*）|\\([^)]*\\))\\s*$"),
-            ""
-        ).trim()
+        // 4. 方括号里只有数字：`[02]` / `【05】` 这类是标准集数写法
+        val bracketEpisodes = Regex("(?i)[\\[【]\\s*(\\d{1,4})(?:v\\d)?\\s*[\\]】]").findAll(name)
+            .mapNotNull { it.groupValues[1].toIntOrNull() }
+            .filter { it in 1..1999 && it !in RESOLUTIONS }
+            .filter { it < 1900 || it > 2099 }
+            .toList()
+        if (bracketEpisodes.isNotEmpty()) return bracketEpisodes.last()
 
-        // 4. 末尾 " - 01" / " 01" / "01v2"
-        Regex("(?:^|[\\s._\\-\\]])(\\d{1,4})(?:v\\d)?\\s*$").find(tail)?.let {
+        // 括号里的内容（字幕组标签，如 "[Sakurato&343-Labs]"）不参与集数判断，
+        // 否则标签里的 343 会被当成第 343 集
+        val noBrackets = name.replace(
+            Regex("\\[[^]]*]|【[^】]*】|（[^）]*）|\\([^)]*\\)"), " "
+        ).replace(Regex("\\s+"), " ").trim()
+
+        // 5. 末尾 " - 01" / " 01" / "01v2"
+        Regex("(?:^|[\\s._\\-\\]])(\\d{1,4})(?:v\\d)?\\s*$").find(noBrackets)?.let {
             val value = it.groupValues[1].toIntOrNull() ?: 0
             if (value in 1..1999) return value
         }
 
         // 5. 任何位置最后一个「独立」数字（排除 MP4 / H264 / 1080p 这类粘连字母的数字）
-        val candidates = Regex("(?i)(?<![a-z0-9])(\\d{1,4})(?![a-z0-9])").findAll(name)
+        val candidates = Regex("(?i)(?<![a-z0-9])(\\d{1,4})(?![a-z0-9])").findAll(noBrackets)
             .mapNotNull { it.groupValues[1].toIntOrNull() }
             .filter { it in 1..1999 && it !in RESOLUTIONS }
             .filter { it < 1900 || it > 2099 }

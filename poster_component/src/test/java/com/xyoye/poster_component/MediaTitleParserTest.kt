@@ -127,4 +127,32 @@ class MediaTitleParserTest {
         assertEquals("Grand Blue Dreaming", parsed.title)
         assertEquals(2, parsed.season)
     }
+
+    @Test
+    fun `subgroup tag number is not an episode`() {
+        // [Sakurato&343-Labs] 里的 343 曾经被当成第 343 集
+        val folder = "[BDrip] Dan Da Dan S01 [Sakurato&343-Labs]"
+        val parsed = MediaTitleParser.parseFileName(folder, folder)
+        assertEquals("Dan Da Dan", parsed.title)
+        assertEquals(1, parsed.season)
+        assertEquals(0, parsed.episode)
+    }
+
+    @Test
+    fun `romaji name with subgroup prefix`() {
+        val parsed = MediaTitleParser.parseFileName(
+            "[Sakurato&343-Labs] Dan Da Dan - 01 [1080p][CHS].mkv",
+            "Dan Da Dan"
+        )
+        assertEquals("Dan Da Dan", parsed.title)
+        assertEquals(1, parsed.episode)
+    }
+
+    @Test
+    fun `romaji title is recognized as latin`() {
+        assertTrue(MediaTitleParser.isLatinTitle("Dan Da Dan"))
+        assertTrue(MediaTitleParser.isLatinTitle("Sono Bisque Doll wa Koi wo Suru"))
+        assertFalse(MediaTitleParser.isLatinTitle("胆大党"))
+        assertFalse(MediaTitleParser.isLatinTitle("ダンダダン"))
+    }
 }

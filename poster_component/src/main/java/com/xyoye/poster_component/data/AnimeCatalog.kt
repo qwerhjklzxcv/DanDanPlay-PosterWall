@@ -78,7 +78,13 @@ object AnimeCatalog {
             val title = anime.animeTitle.orEmpty()
             if (title.isBlank()) return@forEach
 
-            var score = MediaTitleParser.similarity(query, title)
+            // 标题相似度 + 官方检索别名（searchKeyword，常为罗马音/英文）
+            val titleScore = MediaTitleParser.similarity(query, title)
+            val keywordScore = anime.searchKeyword
+                ?.takeIf { it.isNotBlank() }
+                ?.let { MediaTitleParser.similarity(query, it) }
+                ?: 0
+            var score = maxOf(titleScore, keywordScore)
             if (score <= 0) return@forEach
 
             if (MediaTitleParser.normalize(query) == MediaTitleParser.normalize(title)) {

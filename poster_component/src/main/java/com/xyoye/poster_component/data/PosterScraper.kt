@@ -25,8 +25,15 @@ class ScrapeQuotaException(message: String) : Exception(message)
  */
 object PosterScraper {
 
-    /** 低于这个相似度就认为没匹配上，宁可留空让用户手动改，也不乱贴海报 */
+    /** 中文标题：低于这个相似度就认为没匹配上，宁可留空让用户手动改，也不乱贴海报 */
     private const val MIN_MATCH_SCORE = 55
+
+    /** 拉丁标题（罗马音 / 英文）：只能靠搜索相关度，阈值放宽一档，允许前 3 条结果 */
+    private const val MIN_MATCH_SCORE_LATIN = 45
+
+    private fun minScore(series: PosterSeries): Int {
+        return if (isLatinTitle(series.rawTitle)) MIN_MATCH_SCORE_LATIN else MIN_MATCH_SCORE
+    }
 
     private const val MEMORY_SEARCH_CACHE_SIZE = 150
 
@@ -90,7 +97,7 @@ object PosterScraper {
                 .maxByOrNull { (index, anime) -> score(anime, series, index) }
                 ?: continue
 
-            if (score(best.value, series, best.index) < MIN_MATCH_SCORE) continue
+            if (score(best.value, series, best.index) < minScore(series)) continue
 
             return enrich(series, best.value.animeId, best.value.animeTitle)
         }
@@ -220,14 +227,20 @@ object PosterScraper {
         if (animeTitle.isBlank()) return 0
 
         val similarity = MediaTitleParser.similarity(series.rawTitle, animeTitle)
-        val latinQuery = series.rawTitle.none { it.code in 0x4E00..0x9FFF }
+        val latinQuery = isLatinTitle(series.rawTitle)
+
+        // searchKeyword 是官方给的检索别名（常为罗马音），命中它比标题相似度更可信
+        val keywordScore = anime.searchKeyword
+            ?.takeIf { it.isNotBlank() }
+            ?.let { MediaTitleParser.similarity(series.rawTitle, it) }
+            ?: 0
 
         // 英文 / 罗马音标题搜出来的结果通常是中文名，相似度恒为 0，
         // 这时以「搜索接口的相关度排序」作为基准分（排名越靠前越可信）。
-        var score = if (latinQuery) {
-            maxOf(similarity, (70 - rank * 25).coerceAtLeast(20))
-        } else {
-            similarity
+        var score = when {
+            keywordScore >= 70 -> 100
+            latinQuery -> maxOf(similarity, (80 - rank * 15).coerceAtLeast(30))
+            else -> similarity
         }
 
         // 完全一致再加一档，避免被「续作 / 剧场版」的近似标题抢走
@@ -265,24 +278,9 @@ object PosterScraper {
     }
 
     /**
-     * 标题是否「纯拉丁」（罗马音 / 英文）。
-     * 含汉字 / 假名 / 韩文就不算，避免把中文番名当罗马音去查别名索引。
+     * 标题是否「纯拉丁」（罗马音 / 英文）。实现见 [MediaTitleParser.isLatinTitle]。
      */
-    private fun isLatinTitle(title: String): Boolean {
-        if (title.isBlank()) return false
-
-        var hasLetter = false
-        title.forEach { char ->
-            when {
-                char.code in 0x4E00..0x9FFF -> return false
-                char.code in 0x3400..0x4DBF -> return false
-                char.code in 0x3040..0x30FF -> return false
-                char.code in 0xAC00..0xD7AF -> return false
-                char.isLetter() && char.code < 0x0250 -> hasLetter = true
-            }
-        }
-        return hasLetter
-    }
+    private fun isLatinTitle(title: String): Boolean = MediaTitleParser.isLatinTitle(title)
 
     private fun matchSeasonMarker(animeTitle: String): Int =
         MediaTitleParser.seasonMarker(animeTitle)
