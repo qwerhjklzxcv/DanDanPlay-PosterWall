@@ -29,6 +29,26 @@ object MediaTitleParser {
         Regex("\\([^)]*\\)")
     )
 
+    /**
+     * 括号里的内容。
+     *
+     * DBD-Raws / KTXP 这类命名会把**番名本身**放进括号：
+     * `[DBD-Raws][异世界舅舅][01-13TV全集+特典映像][1080P]…`
+     * 直接删括号会把标题一起删掉，所以要先留一份候选。
+     */
+    private val BRACKET_CONTENT_REGEX = Regex("\\[([^]]+)]|【([^】]+)】")
+
+    /** 出现即判定为字幕组 / 压制组标签 */
+    private val GROUP_HINTS = listOf(
+        "raws", "labs", "sub", "team", "字幕组", "压制", "搬运", "&"
+    )
+
+    /** 出现即判定为标签而非标题 */
+    private val NOISE_SUBSTRINGS = listOf(
+        "全集", "特典", "映像", "外挂", "内封", "内嵌", "双语", "简繁", "字幕",
+        "1080", "720", "2160", "4k", "hevc", "avc", "x264", "x265", "flac", "opus", "aac"
+    )
+
     /** 技术规格 / 字幕组标签，命中后直接丢弃 */
     private val NOISE_WORDS = listOf(
         "1080p", "1080i", "720p", "2160p", "1440p", "480p", "360p", "4k", "8k",
@@ -82,16 +102,56 @@ object MediaTitleParser {
      * 解析单个视频文件名。
      *
      * @param fileName 文件名（含扩展名）
-     * @param fallbackTitle 解析不出标题时使用的兜底标题（通常是文件夹名）
+     * @param fallbackTitle 解析不出标题时使用的兜底标题（通常是文件夹名，可能带一堆方括号）
      */
     fun parseFileName(fileName: String, fallbackTitle: String): ParsedTitle {
         val baseName = removeExtension(fileName)
 
         // 季度和集数要在清洗之前提取，因为 "[S02]"、"【第05话】" 这类信息在括号里
-        val season = parseSeason(baseName)
+        var season = parseSeason(baseName)
         val episode = parseEpisode(baseName)
 
-        var title = baseName
+        val title = cleanTitleText(baseName)
+
+        // 只剩纯数字或者太短，认为不是标题
+        val useFallback = title.length < 2 || title.all { it.isDigit() }
+        var finalTitle = title
+
+        if (useFallback) {
+            finalTitle = titleFromFallback(fallbackTitle)
+            if (season == 0) {
+                season = parseSeason(fallbackTitle)
+            }
+        }
+
+        return ParsedTitle(
+            title = finalTitle,
+            season = season,
+            episode = episode
+        )
+    }
+
+    /**
+     * 兜底标题清洗：先按常规规则洗，洗不出来再从括号里挑番名。
+     *
+     * `[DBD-Raws][异世界舅舅][01-13TV全集+特典映像][1080P]…` 这种命名，
+     * 番名本身就在括号里，直接删括号会连标题一起删掉。
+     */
+    private fun titleFromFallback(fallbackTitle: String): String {
+        val cleaned = cleanTitleText(fallbackTitle)
+        if (cleaned.length >= 2 && cleaned.all { it.isDigit() }.not()) {
+            return cleaned
+        }
+
+        return bestBracketTitle(fallbackTitle)?.let { cleanCandidate(it) }
+            ?: fallbackTitle.trim()
+    }
+
+    /**
+     * 把任意原始名清洗成「标题」：去括号、去字幕组/技术标签、去季度与集数标记。
+     */
+    private fun cleanTitleText(raw: String): String {
+        var title = raw
         // 字幕组的「★10月新番★」这类装饰先整块干掉
         title = title.replace(Regex("★[^★]*★"), " ")
         title = title.replace(Regex("[★☆]"), " ")
@@ -120,17 +180,66 @@ object MediaTitleParser {
         // 结尾残留的集数（"番名 03" / "番名 - 12v2"）
         title = title.replace(Regex("(?:^|[\\s._\\-])v?\\d{1,4}(?:v\\d)?\\s*$"), " ")
         title = title.replace(Regex("[-–—~:：|/\\\\]+"), " ")
-        title = title.replace(Regex("\\s+"), " ").trim(' ', '-', '–', '—', '.')
+        return title.replace(Regex("\\s+"), " ").trim(' ', '-', '–', '—', '.')
+    }
 
-        // 只剩纯数字或者太短，认为不是标题
-        val useFallback = title.length < 2 || title.all { it.isDigit() }
-        val finalTitle = if (useFallback) fallbackTitle.trim() else title
+    /**
+     * 从括号内容里挑出最像番名的一段（用于 `[组名][番名][01-13][1080P]` 这类命名）。
+     */
+    private fun bestBracketTitle(rawName: String): String? {
+        return BRACKET_CONTENT_REGEX.findAll(rawName)
+            .map { match -> match.groupValues[1].ifBlank { match.groupValues[2] }.trim() }
+            .filter { isTitleLike(it) }
+            .maxByOrNull { candidateScore(it) }
+    }
 
-        return ParsedTitle(
-            title = finalTitle,
-            season = season,
-            episode = episode
-        )
+    private fun isTitleLike(text: String): Boolean {
+        if (text.length < 2) return false
+
+        val normalized = normalize(text)
+        if (normalized.isEmpty() || normalized.all { it.isDigit() }) return false
+
+        val lower = text.lowercase()
+        if (GROUP_HINTS.any { lower.contains(it) }) return false
+        if (NOISE_SUBSTRINGS.any { lower.contains(it) }) return false
+
+        // 01-13 / 01~12 这类集数区间
+        if (Regex("^\\d{1,3}\\s*[-~～]\\s*\\d{1,3}").containsMatchIn(text)) return false
+
+        // GB_CN / CHS / JPN 这类语言标记
+        if (Regex("^[A-Za-z]{2,3}(_[A-Za-z]{2,3})?$").matches(text)) return false
+
+        // 每个词都是技术标签（HEVC-10bit / AVC_AAC）
+        val tokens = text.split(Regex("[^A-Za-z0-9\\u4e00-\\u9fff]+")).filter { it.isNotBlank() }
+        if (tokens.isNotEmpty() && tokens.all { token ->
+                NOISE_WORDS.any { normalize(it) == normalize(token) }
+            }) {
+            return false
+        }
+
+        return true
+    }
+
+    private fun candidateScore(text: String): Int {
+        var score = 0
+        val cjkCount = text.count { it.code in 0x4E00..0x9FFF }
+        if (cjkCount >= 2) score += 30 + minOf(cjkCount, 10)
+
+        val words = text.split(Regex("[\\s._\\-]+")).filter { it.isNotBlank() }
+        if (words.size >= 2) score += 15
+        if (text.length in 3..40) score += 5
+        if (Regex("[A-Za-z]").containsMatchIn(text)) score += 3
+
+        return score
+    }
+
+    private fun cleanCandidate(text: String): String {
+        var title = text.replace('_', ' ')
+        title = title.replace(Regex("(?i)第\\s*[一二三四五六七八九十\\d]{1,3}\\s*[季部]"), " ")
+        title = title.replace(Regex("(?i)\\bseason\\s*\\d{1,2}\\b"), " ")
+        title = title.replace(Regex("(?i)\\bs\\d{1,2}\\b"), " ")
+        title = title.replace(Regex("[-–—~:：|/\\\\]+"), " ")
+        return title.replace(Regex("\\s+"), " ").trim(' ', '-', '–', '—', '.')
     }
 
     /**
@@ -200,6 +309,24 @@ object MediaTitleParser {
             list.add(text.substring(index, index + 2))
         }
         return list
+    }
+
+    /**
+     * 从标题里解析季度标记（`第X季` / `Season X` / `S0X`），没有则返回 0。
+     */
+    fun seasonMarker(title: String): Int {
+        Regex("第([一二三四五六七八九十\\d]{1,3})季").find(title)?.let { match ->
+            val text = match.groupValues[1]
+            text.toIntOrNull()?.let { return it }
+            return chineseNumberToInt(text)
+        }
+        Regex("(?i)season\\s*(\\d{1,2})").find(title)?.let { match ->
+            match.groupValues[1].toIntOrNull()?.let { return it }
+        }
+        Regex("(?i)\\bs(\\d{1,2})\\b").find(title)?.let { match ->
+            match.groupValues[1].toIntOrNull()?.let { return it }
+        }
+        return 0
     }
 
     private fun parseSeason(name: String): Int {

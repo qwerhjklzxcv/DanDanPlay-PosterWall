@@ -10,21 +10,27 @@ import kotlinx.coroutines.sync.withLock
 /**
  * 海报墙数据仓库：扫描 → 刮削 → 缓存。
  *
- * 默认只扫网络媒体库，其中 WebDAV 是主要目标；想放开 SMB / FTP / Alist
- * 只要改 [SCAN_MEDIA_TYPES] 即可，底层 Storage 抽象是同一套。
+ * 扫描范围是弹弹play 支持的全部网络媒体库（WebDAV / SMB / FTP / Alist / PC 端），
+ * 底层走同一套 Storage 抽象。
  */
 object PosterRepository {
 
     /**
-     * 需要纳入海报墙的媒体库类型。默认只有 WebDAV；
-     * 想同时扫 SMB / FTP / Alist，直接往这里加（底层是同一套 Storage 抽象）。
+     * 需要纳入海报墙的媒体库类型：弹弹play 支持的所有「网络媒体库」。
+     *
+     * 本地/串流/磁链/投屏不在此列（它们没有「番剧文件夹」这一层）。
+     * 底层是同一套 Storage 抽象，加类型只需要在这里加一项。
      */
     val SCAN_MEDIA_TYPES = listOf(
-        MediaType.WEBDAV_SERVER
+        MediaType.WEBDAV_SERVER,
+        MediaType.SMB_SERVER,
+        MediaType.FTP_SERVER,
+        MediaType.ALSIT_STORAGE,
+        MediaType.REMOTE_STORAGE
     )
 
     private const val MAX_SCRAPE_PER_REFRESH = 200
-    private const val SCRAPE_INTERVAL_MS = 150L
+    private const val SCRAPE_INTERVAL_MS = 220L
 
     private val memory = LinkedHashMap<String, PosterSeries>()
     private val mutex = Mutex()
@@ -60,7 +66,7 @@ object PosterRepository {
         val result = mutableListOf<PosterSeries>()
         val libraries = SCAN_MEDIA_TYPES.flatMap { librariesOf(it) }
         if (libraries.isEmpty()) {
-            onProgress("还没有连接 WebDAV 网盘")
+            onProgress("还没有连接网络媒体库")
             return@withLock emptyList()
         }
 
@@ -93,6 +99,12 @@ object PosterRepository {
             }
 
             val merged = scanned.map { series -> mergeMatched(series) }
+
+            // 有需要刮削的番才加载目录：目录命中就不必消耗搜索配额
+            if (merged.any { forceScrape || !it.matched }) {
+                AnimeCatalog.ensureLoaded { message -> onProgress(message) }
+            }
+
             onProgress("刮削 ${merged.size} 部番剧…")
             val scraped = scrapeSeries(merged, forceScrape, onProgress)
 
@@ -193,17 +205,23 @@ object PosterRepository {
         var index = 0
         val result = mutableListOf<PosterSeries>()
 
-        seriesList.forEach { series ->
+        for ((position, series) in seriesList.withIndex()) {
             val needScrape = forceScrape || series.matched.not()
             if (!needScrape || scrapedCount >= MAX_SCRAPE_PER_REFRESH) {
                 result += series
-                return@forEach
+                continue
             }
 
             index++
             onProgress("刮削 ${series.rawTitle}（$index/${seriesList.size}）")
             val scraped = try {
                 PosterScraper.scrape(series)
+            } catch (e: ScrapeQuotaException) {
+                // 配额用尽：本轮停下，剩下的原样保留，下次刷新再继续
+                onProgress("接口配额已用尽，本轮已刮削 $scrapedCount 部，剩下 ${seriesList.size - position} 部下次继续")
+                result += series
+                result += seriesList.drop(position + 1)
+                break
             } catch (e: Exception) {
                 e.printStackTrace()
                 series
@@ -220,12 +238,16 @@ object PosterRepository {
     private fun mergeMatched(series: PosterSeries): PosterSeries {
         val old = memory[series.id] ?: return series
         if (old.matched.not()) return series
+        // 老缓存没有多语言标题，让它重新刮一次补全
+        if (old.titlesChecked.not()) return series
         return series.copy(
             animeId = old.animeId,
             animeTitle = old.animeTitle,
             posterUrl = old.posterUrl,
             rating = old.rating,
             summary = old.summary,
+            titles = old.titles,
+            titlesChecked = true,
             year = if (old.year > 0) old.year else series.year,
             matched = true
         )

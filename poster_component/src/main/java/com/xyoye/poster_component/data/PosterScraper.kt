@@ -1,47 +1,110 @@
 package com.xyoye.poster_component.data
 
 import com.xyoye.common_component.network.repository.AnimeRepository
+import com.xyoye.common_component.network.request.NetworkException
 import com.xyoye.data_component.data.AnimeData
 
 /**
- * 刮削器：拿解析出来的标题去弹弹play 自己的番剧搜索接口捞海报/评分/番剧 id。
+ * 接口配额用尽（服务端返回 errorCode 429「已达到接口调用配额上限」）。
  *
- * 之所以不用 TMDB / Bangumi：
- * - 这里搜的是「中英日混排的番剧名」，弹弹play 的库本身就是中文优先，命中率最高；
- * - 不需要额外申请 key，走的还是 App 自带的鉴权与重试链路；
- * - 捞回来的 `animeId` 之后还能直接用于详情页、追番、弹幕匹配。
+ * 弹弹play 从 2026-06 起对应用做配额管理，新应用额度很小，
+ * 撞上之后本轮必须停下来，否则只会继续报错。
+ */
+class ScrapeQuotaException(message: String) : Exception(message)
+
+/**
+ * 刮削器：把「扫描出来的系列」映射到弹弹play 的番剧库。
+ *
+ * 实测结论（用真实凭证验证过）：
+ * - `/api/v2/match` 的 `fileNameOnly` 对我们这档应用一律返回「参数不符合规则」，**不可用**；
+ * - `/api/v2/search/episodes`、`/api/v2/search/tmdb` 有独立配额且很小，**不用**；
+ * - `/api/v2/search/anime` 可用，中文名基本都能命中，部分英文/罗马音也能命中；
+ * - `/api/v2/bangumi/{id}` 提供封面、评分、简介和 `titles` 多语言标题。
+ *
+ * 所以策略是：**标题搜索 → 打分 → 详情补全**，并且三级缓存兜住重复请求。
  */
 object PosterScraper {
 
     /** 低于这个相似度就认为没匹配上，宁可留空让用户手动改，也不乱贴海报 */
     private const val MIN_MATCH_SCORE = 55
 
+    private const val MEMORY_SEARCH_CACHE_SIZE = 150
+
+    /** 番剧搜索结果内存缓存（磁盘缓存之上再挡一层） */
+    private val memorySearchCache = object :
+        LinkedHashMap<String, List<AnimeData>>(MEMORY_SEARCH_CACHE_SIZE, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, List<AnimeData>>?
+        ): Boolean {
+            return size > MEMORY_SEARCH_CACHE_SIZE
+        }
+    }
+
     suspend fun scrape(series: PosterSeries): PosterSeries {
-        val keywords = buildKeywords(series)
-        for (keyword in keywords) {
-            val result = try {
-                AnimeRepository.searchAnime(keyword, null)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                return series
-            }
-            val animes = result.getOrNull()?.animes.orEmpty()
+        return matchByTitle(series) ?: series
+    }
+
+    /**
+     * 手动指定番剧后补全详情（供「重新匹配」弹窗调用）
+     */
+    suspend fun applyAnime(series: PosterSeries, animeId: Int, animeTitle: String?): PosterSeries {
+        return enrich(series, animeId, animeTitle)
+    }
+
+    // ------------------------------------------------------------------ 标题搜索 + 打分
+
+    private suspend fun matchByTitle(series: PosterSeries): PosterSeries? {
+        // 1. 先用季度目录本地匹配：不消耗搜索配额
+        AnimeCatalog.find(series.rawTitle, series.season)?.let { anime ->
+            return enrich(series, anime.animeId, anime.animeTitle)
+        }
+
+        // 2. 目录里没有，才走搜索接口
+        for (keyword in buildKeywords(series)) {
+            val animes = searchAnimeCached(keyword)
             if (animes.isEmpty()) continue
 
-            val best = animes.maxByOrNull { score(it, series) } ?: continue
-            if (score(best, series) < MIN_MATCH_SCORE) continue
+            val best = animes.withIndex()
+                .maxByOrNull { (index, anime) -> score(anime, series, index) }
+                ?: continue
 
-            return series.copy(
-                animeId = best.animeId,
-                animeTitle = best.animeTitle,
-                posterUrl = best.imageUrl,
-                rating = best.rating,
-                year = best.startDate?.take(4)?.toIntOrNull() ?: series.year,
-                matched = true,
-                lastUpdate = System.currentTimeMillis()
-            )
+            if (score(best.value, series, best.index) < MIN_MATCH_SCORE) continue
+
+            return enrich(series, best.value.animeId, best.value.animeTitle)
         }
-        return series
+        return null
+    }
+
+    private suspend fun searchAnimeCached(keyword: String): List<AnimeData> {
+        memorySearchCache[keyword]?.let { return it }
+
+        ScrapeCacheStore.keyword(keyword)?.let { cached ->
+            if (cached.isNotEmpty()) {
+                memorySearchCache[keyword] = cached
+                return cached
+            }
+        }
+
+        val animes = try {
+            AnimeRepository.searchAnime(keyword, null).getOrNull()?.animes.orEmpty()
+        } catch (e: NetworkException) {
+            if (isQuotaError(e)) throw ScrapeQuotaException(e.message ?: "接口调用配额已用尽")
+            e.printStackTrace()
+            emptyList()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+
+        if (animes.isNotEmpty()) {
+            memorySearchCache[keyword] = animes
+            ScrapeCacheStore.putKeyword(keyword, animes)
+        }
+        return animes
+    }
+
+    private fun isQuotaError(e: NetworkException): Boolean {
+        return e.code == 429 || e.message?.contains("配额") == true
     }
 
     /**
@@ -50,22 +113,109 @@ object PosterScraper {
     private fun buildKeywords(series: PosterSeries): List<String> {
         val title = series.rawTitle.trim()
         if (title.isEmpty()) return emptyList()
+
         return if (series.season > 1) {
-            listOf("$title 第${series.season}季", "$title S${series.season}", title)
+            listOf(
+                "$title 第${series.season}季",
+                "$title S${series.season}",
+                title
+            )
         } else {
             listOf(title)
         }
     }
 
-    private fun score(anime: AnimeData, series: PosterSeries): Int {
+    // ------------------------------------------------------------------ 详情补全（带缓存）
+
+    private suspend fun enrich(series: PosterSeries, animeId: Int, animeTitle: String?): PosterSeries {
+        if (animeId <= 0) return series
+
+        // 详情命中缓存：直接拼装，跳过 /api/v2/bangumi 请求
+        ScrapeCacheStore.detail(animeId)?.let { cached ->
+            return series.copy(
+                animeId = animeId,
+                animeTitle = cached.title ?: animeTitle,
+                posterUrl = cached.imageUrl,
+                rating = cached.rating,
+                summary = cached.summary,
+                titles = cached.titles.toMutableList(),
+                titlesChecked = true,
+                matched = true,
+                lastUpdate = System.currentTimeMillis()
+            )
+        }
+
+        val bangumi = try {
+            AnimeRepository.getAnimeDetail(animeId.toString()).getOrNull()?.bangumi
+        } catch (e: NetworkException) {
+            if (isQuotaError(e)) throw ScrapeQuotaException(e.message ?: "接口调用配额已用尽")
+            e.printStackTrace()
+            null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        } ?: return series.copy(
+            animeId = animeId,
+            animeTitle = animeTitle,
+            matched = true,
+            lastUpdate = System.currentTimeMillis()
+        )
+
+        val titles = mutableListOf<PosterTitle>()
+        bangumi.titles?.forEach { title ->
+            val text = title.title
+            if (!text.isNullOrBlank()) {
+                titles.add(PosterTitle(title.language.orEmpty(), text))
+            }
+        }
+
+        ScrapeCacheStore.putDetail(
+            animeId = animeId,
+            title = bangumi.animeTitle,
+            imageUrl = bangumi.imageUrl,
+            rating = bangumi.rating,
+            summary = bangumi.summary,
+            titles = titles
+        )
+
+        return series.copy(
+            animeId = animeId,
+            animeTitle = bangumi.animeTitle?.takeIf { it.isNotBlank() } ?: animeTitle,
+            posterUrl = bangumi.imageUrl,
+            rating = bangumi.rating,
+            summary = bangumi.summary,
+            titles = titles,
+            titlesChecked = true,
+            matched = true,
+            lastUpdate = System.currentTimeMillis()
+        )
+    }
+
+    // ------------------------------------------------------------------ 打分
+
+    private fun score(anime: AnimeData, series: PosterSeries, rank: Int): Int {
         val animeTitle = anime.animeTitle.orEmpty()
         if (animeTitle.isBlank()) return 0
 
-        var score = MediaTitleParser.similarity(series.rawTitle, animeTitle)
+        val similarity = MediaTitleParser.similarity(series.rawTitle, animeTitle)
+        val latinQuery = series.rawTitle.none { it.code in 0x4E00..0x9FFF }
+
+        // 英文 / 罗马音标题搜出来的结果通常是中文名，相似度恒为 0，
+        // 这时以「搜索接口的相关度排序」作为基准分（排名越靠前越可信）。
+        var score = if (latinQuery) {
+            maxOf(similarity, (70 - rank * 25).coerceAtLeast(20))
+        } else {
+            similarity
+        }
 
         // 完全一致再加一档，避免被「续作 / 剧场版」的近似标题抢走
         if (MediaTitleParser.normalize(series.rawTitle) == MediaTitleParser.normalize(animeTitle)) {
             score += 15
+        }
+
+        // 多集番剧不该匹配到剧场版 / OVA
+        if (series.episodeCount > 1 && isMovieLike(animeTitle)) {
+            score -= 40
         }
 
         if (series.season > 1) {
@@ -85,41 +235,13 @@ object PosterScraper {
         return score.coerceIn(0, 100)
     }
 
-    private fun matchSeasonMarker(animeTitle: String): Int {
-        Regex("第([一二三四五六七八九十\\d]{1,3})季").find(animeTitle)?.let { match ->
-            val text = match.groupValues[1]
-            text.toIntOrNull()?.let { return it }
-            return chineseToInt(text)
-        }
-        Regex("(?i)season\\s*(\\d{1,2})").find(animeTitle)?.let { match ->
-            match.groupValues[1].toIntOrNull()?.let { return it }
-        }
-        Regex("(?i)\\bs(\\d{1,2})\\b").find(animeTitle)?.let { match ->
-            match.groupValues[1].toIntOrNull()?.let { return it }
-        }
-        return 0
+    private fun isMovieLike(title: String): Boolean {
+        return title.contains("剧场版") ||
+                title.contains("劇場版") ||
+                title.contains("Movie", ignoreCase = true) ||
+                Regex("(?i)\\bova\\b|\\boad\\b").containsMatchIn(title)
     }
 
-    private fun chineseToInt(text: String): Int {
-        var result = 0
-        var pending = 0
-        text.forEach { char ->
-            when (char) {
-                '一' -> pending = 1
-                '二' -> pending = 2
-                '三' -> pending = 3
-                '四' -> pending = 4
-                '五' -> pending = 5
-                '六' -> pending = 6
-                '七' -> pending = 7
-                '八' -> pending = 8
-                '九' -> pending = 9
-                '十' -> {
-                    result += if (pending == 0) 10 else pending * 10
-                    pending = 0
-                }
-            }
-        }
-        return result + pending
-    }
+    private fun matchSeasonMarker(animeTitle: String): Int =
+        MediaTitleParser.seasonMarker(animeTitle)
 }
