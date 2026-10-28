@@ -40,8 +40,11 @@ object PosterScraper {
         }
     }
 
-    suspend fun scrape(series: PosterSeries): PosterSeries {
-        return matchByTitle(series) ?: series
+    suspend fun scrape(
+        series: PosterSeries,
+        onProgress: suspend (String) -> Unit = {}
+    ): PosterSeries {
+        return matchByTitle(series, onProgress) ?: series
     }
 
     /**
@@ -53,13 +56,32 @@ object PosterScraper {
 
     // ------------------------------------------------------------------ 标题搜索 + 打分
 
-    private suspend fun matchByTitle(series: PosterSeries): PosterSeries? {
-        // 1. 先用季度目录本地匹配：不消耗搜索配额
+    private suspend fun matchByTitle(
+        series: PosterSeries,
+        onProgress: suspend (String) -> Unit
+    ): PosterSeries? {
+        // 0. 纯拉丁标题（罗马音 / 英文）：先查本地别名索引，命中即零请求
+        if (isLatinTitle(series.rawTitle)) {
+            val key = MediaTitleParser.normalize(series.rawTitle)
+            ScrapeCacheStore.aliasAnimeId(key)?.let { animeId ->
+                return enrich(series, animeId, null)
+            }
+        }
+
+        // 1. 季度目录本地匹配：不消耗搜索配额
         AnimeCatalog.find(series.rawTitle, series.season)?.let { anime ->
             return enrich(series, anime.animeId, anime.animeTitle)
         }
 
-        // 2. 目录里没有，才走搜索接口
+        // 2. 目录没命中，但解析出了年份：按年补拉那一年的 4 个季度再试
+        if (series.year > 0) {
+            AnimeCatalog.ensureYearLoaded(series.year) { message -> onProgress(message) }
+            AnimeCatalog.find(series.rawTitle, series.season)?.let { anime ->
+                return enrich(series, anime.animeId, anime.animeTitle)
+            }
+        }
+
+        // 3. 目录里没有，才走搜索接口
         for (keyword in buildKeywords(series)) {
             val animes = searchAnimeCached(keyword)
             if (animes.isEmpty()) continue
@@ -240,6 +262,26 @@ object PosterScraper {
                 title.contains("劇場版") ||
                 title.contains("Movie", ignoreCase = true) ||
                 Regex("(?i)\\bova\\b|\\boad\\b").containsMatchIn(title)
+    }
+
+    /**
+     * 标题是否「纯拉丁」（罗马音 / 英文）。
+     * 含汉字 / 假名 / 韩文就不算，避免把中文番名当罗马音去查别名索引。
+     */
+    private fun isLatinTitle(title: String): Boolean {
+        if (title.isBlank()) return false
+
+        var hasLetter = false
+        title.forEach { char ->
+            when {
+                char.code in 0x4E00..0x9FFF -> return false
+                char.code in 0x3400..0x4DBF -> return false
+                char.code in 0x3040..0x30FF -> return false
+                char.code in 0xAC00..0xD7AF -> return false
+                char.isLetter() && char.code < 0x0250 -> hasLetter = true
+            }
+        }
+        return hasLetter
     }
 
     private fun matchSeasonMarker(animeTitle: String): Int =

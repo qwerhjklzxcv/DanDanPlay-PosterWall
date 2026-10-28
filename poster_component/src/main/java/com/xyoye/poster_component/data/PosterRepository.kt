@@ -215,7 +215,7 @@ object PosterRepository {
             index++
             onProgress("刮削 ${series.rawTitle}（$index/${seriesList.size}）")
             val scraped = try {
-                PosterScraper.scrape(series)
+                PosterScraper.scrape(series) { message -> onProgress(message) }
             } catch (e: ScrapeQuotaException) {
                 // 配额用尽：本轮停下，剩下的原样保留，下次刷新再继续
                 onProgress("接口配额已用尽，本轮已刮削 $scrapedCount 部，剩下 ${seriesList.size - position} 部下次继续")
